@@ -1,12 +1,12 @@
 FLAGS = -fPIC
 
-ifeq (armv7-linux-androideabi,$(TARGET))
-	# Reset TARGET variable because armv7 target name used by Rust is not 
-	# the same as the target name needed for the CXX toolchain.
-	TARGET = arm-linux-androideabi
-	FLAGS += -march=armv7-a -mfpu=neon --target=$(TARGET)
-endif
-
+ifeq (wasm32-unknown-unknown,$(TARGET))
+	WASI_SDK_ROOT ?= /opt/wasi-sdk
+	CXX ?= $(WASI_SDK_ROOT)/bin/clang++
+	CC ?= $(WASI_SDK_ROOT)/bin/clang
+	AR ?= $(WASI_SDK_ROOT)/bin/llvm-ar
+	RANLIB ?= $(WASI_SDK_ROOT)/bin/llvm-ranlib
+else
 ifneq ($(HOST),$(TARGET))
   CXX ?= $(TARGET)-g++
   CC ?= $(TARGET)-gcc
@@ -16,15 +16,13 @@ else
   CC ?= gcc
   AR ?= ar
 endif
+endif
 
 ifeq ($(DEBUG),true)
   FLAGS += -g
 else
   FLAGS += -O2
 endif
-
-CFLAGS += $(FLAGS)
-CXXFLAGS += $(FLAGS)
 
 CONFIGURE_FLAGS = \
 	--prefix=$(OUT_DIR) \
@@ -33,8 +31,27 @@ CONFIGURE_FLAGS = \
 	--disable-shared \
 	--without-icu \
 	--without-freetype \
-	--without-glib \
-	--with-coretext=auto
+	--without-glib
+
+ifeq (armv7-linux-androideabi,$(TARGET))
+	# Reset TARGET variable because armv7 target name used by Rust is not
+	# the same as the target name needed for the CXX toolchain.
+	TARGET = arm-linux-androideabi
+	FLAGS += -march=armv7-a -mfpu=neon --target=$(TARGET)
+endif
+
+ifeq (wasm32-unknown-unknown,$(TARGET))
+	# Reset TARGET variable because unknown system name used by Rust is not
+	# the same as the target name needed for the CXX toolchain.
+	TARGET = wasm32-unknown-none
+  CONFIGURE_FLAGS += --with-coretext=no
+	FLAGS += -DHB_NO_MT=1 -DHB_NO_PRAGMA_GCC_DIAGNOSTIC_ERROR=1
+else
+  CONFIGURE_FLAGS += --with-coretext=auto
+endif
+
+CFLAGS += $(FLAGS)
+CXXFLAGS += $(FLAGS)
 
 # Create a unique temporary build directory
 BUILD_DIR := $(shell mktemp -d $(OUT_DIR)/rust_build.XXXXX)
@@ -46,7 +63,7 @@ all:
 	$(MAKE) -f $(CARGO_MANIFEST_DIR)/makefile.touch touch HARFBUZZ="$(BUILD_DIR)"
 	# Configure and build in BUILD_DIR, install from BUILD_DIR into OUT_DIR.
 	cd $(BUILD_DIR) && \
-	  ./configure $(CONFIGURE_FLAGS) CFLAGS="$(CFLAGS)" CXXFLAGS="$(CXXFLAGS)" CPPFLAGS="$(CPPFLAGS)" && \
+	  ./configure $(CONFIGURE_FLAGS) CC="$(CC)" CXX="$(CXX)" AR="$(AR)" RANLIB="$(RANLIB)" CFLAGS="$(CFLAGS)" CXXFLAGS="$(CXXFLAGS)" CPPFLAGS="$(CPPFLAGS)" && \
 	  make -j$(NUM_JOBS) && \
 	  make install
 	# Remove the no-longer-needed BUILD_DIR to save space.
